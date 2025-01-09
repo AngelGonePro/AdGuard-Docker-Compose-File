@@ -1,4 +1,5 @@
-version: '3'  # Specify the Docker Compose version
+#Version is uneeded now.
+#version: '3'  # Specify the Docker Compose version
 
 services:
   adguardhome:  # Define the service named 'adguardhome'
