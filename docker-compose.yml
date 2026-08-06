@@ -1,47 +1,54 @@
-#Version is uneeded now.
-#version: '3'  # Specify the Docker Compose version
-
 services:
-  adguardhome:  # Define the service named 'adguardhome'
-    image: adguard/adguardhome  # Use the 'adguard/adguardhome' Docker image
-    container_name: adguardhome  # Set the container name to 'adguardhome'
-    restart: unless-stopped  # Restart the container automatically unless stopped manually
-    ports:  # Map container ports to host ports
-      # Expose port 53 on TCP and UDP for DNS queries
+  adguardhome:
+    image: adguard/adguardhome:latest
+    container_name: adguardhome
+    restart: unless-stopped
+
+    # --- Resource ceiling for a 1vCPU / 1GB host ---
+    # Leaves headroom for the OS + any other containers (e.g. Technitium)
+    # sharing the box. AdGuard's own footprint is normally 30-80MB, but
+    # query logging/stats can grow if unbounded — see config notes below.
+    deploy:
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 256M
+        reservations:
+          memory: 64M
+
+    # --- Networking ---
+    # If Technitium (or anything else) already owns :53 on this host,
+    # change the host-side port here (e.g. "127.0.0.1:5353:53/udp") and
+    # only expose 53 for whichever resolver is authoritative.
+    ports:
       - "53:53/tcp"
       - "53:53/udp"
+      - "3000:3000/tcp"   # initial setup wizard (can disable/firewall after setup)
+      - "80:80/tcp"       # optional: web UI over plain HTTP after setup
+      # - "443:443/tcp"   # uncomment if you terminate TLS at AdGuard directly
+      # - "853:853/tcp"   # uncomment for DNS-over-TLS
+      # - "784:784/udp"   # uncomment for DNS-over-QUIC
 
-      # Expose port 67 on UDP for DHCP server
-      - "67:67/udp"
+    volumes:
+      - ./workdir:/opt/adguardhome/work
+      - ./confdir:/opt/adguardhome/conf
 
-      # Expose port 68 on UDP for DHCP client
-      # - "68:68/udp"
+    # --- Prevent disk exhaustion from logs on a small VPS ---
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
-      # Expose port 80 on TCP for HTTP web interface
-      - "80:80/tcp"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1:3000 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
-      # Expose port 443 on TCP and UDP for HTTPS web interface
-      - "443:443/tcp"
-      - "443:443/udp"
-
-      # Expose port 3000 on TCP for AdGuard Home's API
-      - "3000:3000/tcp"
-
-      # Expose port 853 on TCP for DNS-over-TLS (DoT)
-      - "853:853/tcp"
-
-      # Expose port 784 on UDP for DNS-over-QUIC (DoQ)
-      - "784:784/udp"
-
-      # Expose port 853 on UDP for DNS-over-DTLS (DoT)
-      - "853:853/udp"
-
-      # Expose port 8853 on UDP for DNS-over-TLS (DoT)
-      - "8853:8853/udp"
-
-      # Expose port 5443 on TCP and UDP for DNSCrypt
-      - "5443:5443/tcp"
-      - "5443:5443/udp"
-    volumes:  # Mount host directories as volumes inside the container
-      - /data/adguard-home/work:/opt/adguardhome/work  # Mount '/my/own/workdir' to '/opt/adguardhome/work'
-      - /data/adguard-home/confdir:/opt/adguardhome/conf  # Mount '/my/own/confdir' to '/opt/adguardhome/conf'
+    # Nice-to-have: keeps AdGuard's own resolver behavior deterministic
+    # rather than depending on the host's /etc/resolv.conf chain.
+    dns:
+      - 127.0.0.1
+      - 1.1.1.2
