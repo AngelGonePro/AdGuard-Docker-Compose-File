@@ -1,0 +1,55 @@
+services:
+  adguardhome:
+    image: ${ADGUARD_IMAGE:-adguard/adguardhome:latest}
+    container_name: adguardhome
+    restart: unless-stopped
+
+    # --- Resource ceiling for a 1vCPU / 1GB host ---
+    # Leaves headroom for the OS + any other containers (e.g. Technitium)
+    # sharing the box. AdGuard's own footprint is normally 30-80MB, but
+    # query logging/stats and large blocklists can grow it — see config notes below.
+    # Values come from .env (ADGUARD_CPU_LIMIT / ADGUARD_MEM_LIMIT / ADGUARD_MEM_RESERVATION)
+    deploy:
+      resources:
+        limits:
+          cpus: "${ADGUARD_CPU_LIMIT:-0.75}"
+          memory: ${ADGUARD_MEM_LIMIT:-384M}
+        reservations:
+          memory: ${ADGUARD_MEM_RESERVATION:-64M}
+
+    # --- Networking ---
+    # If Technitium (or anything else) already owns :53 on this host,
+    # change ADGUARD_DNS_PORT in .env and only expose 53 for whichever
+    # resolver is authoritative.
+    ports:
+      - "${ADGUARD_DNS_PORT:-53}:53/tcp"
+      - "${ADGUARD_DNS_PORT:-53}:53/udp"
+      # - "3000:3000/tcp"   # initial setup wizard (can disable/firewall after setup)
+      - "${ADGUARD_WEB_PORT:-8800}:80/tcp"       # optional: web UI over plain HTTP after setup
+      # - "443:443/tcp"   # uncomment if you terminate TLS at AdGuard directly
+      # - "853:853/tcp"   # uncomment for DNS-over-TLS
+      # - "784:784/udp"   # uncomment for DNS-over-QUIC
+
+    volumes:
+      - ${ADGUARD_WORKDIR:-./workdir}:/opt/adguardhome/work
+      - ${ADGUARD_CONFDIR:-./confdir}:/opt/adguardhome/conf
+
+    # --- Prevent disk exhaustion from logs on a small VPS ---
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1:3000 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+    # Nice-to-have: keeps AdGuard's own resolver behavior deterministic
+    # rather than depending on the host's /etc/resolv.conf chain.
+    dns:
+      - 127.0.0.1
+      - 1.1.1.2
